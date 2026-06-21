@@ -72,11 +72,6 @@ def grandma3_expert() -> str:
     return prompts.grandma3_expert()
 
 
-@mcp.prompt()
-def club_switcher_assistant() -> str:
-    """Specialist prompt for writing and debugging the club-switching Lua plugin."""
-    return prompts.club_switcher_assistant()
-
 
 if __name__ == "__main__":
     import uvicorn
