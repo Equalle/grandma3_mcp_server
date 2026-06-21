@@ -1,0 +1,18 @@
+{
+  "getting-started": {
+    "description": "Introduction to the grandMA3 MCP server",
+    "file": "getting-started.md"
+  },
+  "architecture/fixture-id-ranges": {
+    "description": "Fixture ID numbering conventions for this show file",
+    "file": "architecture/fixture_id_ranges.md"
+  },
+  "architecture/datapool-layout": {
+    "description": "Datapool numbering and club assignment",
+    "file": "architecture/datapool_layout.md"
+  },
+  "lua-api/overview": {
+    "description": "MA3 Lua API reference and common patterns",
+    "file": "lua-api/overview.md"
+  }
+}

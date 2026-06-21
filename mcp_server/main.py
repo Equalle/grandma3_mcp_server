@@ -1,0 +1,106 @@
+import logging
+import os
+
+from mcp.server.fastmcp import FastMCP
+
+from mcp_server.tools import docs
+from mcp_server.resources import prompts
+
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
+logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
+
+mcp = FastMCP("grandMA3 MCP Server")
+
+
+# --- Documentation tools (read) ---
+
+@mcp.tool()
+def list_topics() -> list[dict]:
+    """List all indexed documentation topics."""
+    return docs.list_topics()
+
+
+@mcp.tool()
+def get_doc(topic: str) -> str:
+    """Return full markdown content for a documentation topic."""
+    return docs.get_doc(topic)
+
+
+@mcp.tool()
+def search_docs(query: str) -> list[dict]:
+    """Full-text search across all documentation files."""
+    return docs.search_docs(query)
+
+
+@mcp.tool()
+def list_files() -> list[str]:
+    """List all files in the docs directory."""
+    return docs.list_files()
+
+
+@mcp.tool()
+def list_archives() -> list[str]:
+    """List all archived document versions."""
+    return docs.list_archives()
+
+
+# --- Documentation tools (write with approval) ---
+
+@mcp.tool()
+def propose_doc_update(topic: str, new_content: str, description: str = "") -> dict:
+    """Propose a doc update. Shows diff for user review before applying. User must confirm apply."""
+    return docs.propose_doc_update(topic, new_content, description)
+
+
+@mcp.tool()
+def apply_doc_update(topic: str, description: str = "") -> dict:
+    """Apply a proposed doc update: archives old version, writes new, updates index.json."""
+    return docs.apply_doc_update(topic, description)
+
+
+@mcp.tool()
+def reject_proposal(topic: str) -> dict:
+    """Reject a proposed doc update."""
+    return docs.reject_proposal(topic)
+
+
+# --- Prompt resources ---
+
+@mcp.prompt()
+def grandma3_expert() -> str:
+    """Expert grandMA3 operator and Lua developer persona with show architecture context."""
+    return prompts.grandma3_expert()
+
+
+@mcp.prompt()
+def club_switcher_assistant() -> str:
+    """Specialist prompt for writing and debugging the club-switching Lua plugin."""
+    return prompts.club_switcher_assistant()
+
+
+if __name__ == "__main__":
+    import uvicorn
+    from mcp.server.sse import SseServerTransport
+    from starlette.applications import Starlette
+    from starlette.routing import Route, Mount
+
+    sse_transport = SseServerTransport("/messages")
+
+    async def handle_sse(request):
+        async with sse_transport.connect_sse(
+            request.scope, request.receive, request._send
+        ) as streams:
+            await mcp._mcp_server.run(
+                streams[0], streams[1], mcp._mcp_server.create_initialization_options()
+            )
+
+    app = Starlette(
+        routes=[
+            Route("/sse", endpoint=handle_sse),
+            Mount("/messages", app=sse_transport.handle_post_message),
+        ]
+    )
+
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host="0.0.0.0", port=port)
+
