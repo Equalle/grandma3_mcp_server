@@ -259,3 +259,6 @@ For issues:
 2. Verify the docs directory exists and is writable
 3. Test connectivity: `curl http://100.x.x.x:8000/sse` from your machine
 4. Review the README in the add-on for architecture details
+
+claude mcp remove grandma3
+claude mcp add --transport http grandma3 http://100.106.68.4:8000/mcp
