@@ -5,7 +5,6 @@ slug: "grandma3_mcp_server"
 init: false
 arch:
   - aarch64
-  - armv7
 ports:
   8000/tcp: 8000
 ports_description:
