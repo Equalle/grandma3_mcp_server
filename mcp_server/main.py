@@ -9,7 +9,7 @@ from mcp_server.resources import prompts
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
 
-mcp = FastMCP("grandMA3 MCP Server")
+mcp = FastMCP("grandMA3 MCP Server", host="0.0.0.0", port=8000)
 
 
 # --- Documentation tools (read) ---
