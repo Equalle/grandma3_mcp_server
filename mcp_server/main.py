@@ -1,6 +1,7 @@
 import logging
 import os
 
+import mcp as _mcp_module
 from mcp.server.fastmcp import FastMCP
 
 from mcp_server.tools import docs
@@ -74,5 +75,6 @@ def grandma3_expert() -> str:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="sse")
+    logging.info("mcp library version: %s", _mcp_module.__version__)
+    mcp.run(transport="streamable-http")
 
