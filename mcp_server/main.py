@@ -9,7 +9,9 @@ from mcp_server.resources import prompts
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
 logging.basicConfig(level=getattr(logging, LOG_LEVEL, logging.INFO))
 
-mcp = FastMCP("grandMA3 MCP Server", host="0.0.0.0", port=8000)
+# stateless_http: avoids server-side session tracking entirely, so an addon
+# restart can never leave a client stuck retrying a now-unknown session ID.
+mcp = FastMCP("grandMA3 MCP Server", host="0.0.0.0", port=8000, stateless_http=True)
 
 
 # --- Documentation tools (read) ---
@@ -74,5 +76,5 @@ def grandma3_expert() -> str:
 
 
 if __name__ == "__main__":
-    mcp.run(transport="sse")
+    mcp.run(transport="streamable-http")
 

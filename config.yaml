@@ -1,6 +1,6 @@
 name: "grandMA3 MCP Server"
-description: "MCP server exposing grandMA3 documentation and console control over SSE"
-version: "1.0.0"
+description: "MCP server exposing grandMA3 documentation and console control over streamable HTTP"
+version: "1.1.0"
 slug: "grandma3_mcp_server"
 init: false
 arch:
@@ -8,7 +8,7 @@ arch:
 ports:
   8000/tcp: 8000
 ports_description:
-  8000/tcp: "MCP SSE endpoint"
+  8000/tcp: "MCP streamable HTTP endpoint"
 options:
   ma3_host: "192.168.1.100"
   ma3_port: 30000

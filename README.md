@@ -9,7 +9,7 @@ A Home Assistant OS local add-on that runs an MCP (Model Context Protocol) serve
                 ===========================              ====================
                 
      grandMA3 ─── MA3-Terminal Bridge ───┐         MCP Server
-     (console)    (local PowerShell IPC) │         (SSE over Tailscale)
+     (console)    (local PowerShell IPC) │         (streamable HTTP over Tailscale)
                                          │
                                          └─── Claude Code ←──→ Docs + Archive
                                               (local + remote)
@@ -52,7 +52,7 @@ grandma3-mcp-addon/
 ├── Dockerfile                   # Alpine + Python 3.11
 ├── README.md                    # This file
 └── mcp_server/
-    ├── main.py                  # SSE server, tool/prompt registration
+    ├── main.py                  # streamable HTTP server, tool/prompt registration
     ├── requirements.txt         # mcp[cli], uvicorn, starlette
     ├── __init__.py
     ├── tools/
@@ -89,7 +89,7 @@ grandma3-mcp-addon/
 1. Copy this directory to your HA add-ons folder
 2. Go to Settings → Add-ons → Create Local Add-on, select this folder
 3. Install and start the add-on
-4. MCP server runs on `http://0.0.0.0:8000/sse`
+4. MCP server runs on `http://0.0.0.0:8000/mcp`
 5. Copy your `.md` docs to `/config/mcp_docs/` (or create an `index.json` there)
 
 ### On your machine (Windows/Mac)
@@ -107,8 +107,8 @@ ma3 "list"
 Then in Claude Code, connect to the Pi via Tailscale:
 ```
 MCP settings → add server
-Type: SSE
-URL: http://<pi-tailscale-ip>:8000/sse
+Type: HTTP (streamable HTTP)
+URL: http://<pi-tailscale-ip>:8000/mcp
 ```
 
 ## Documentation directory structure
@@ -137,8 +137,8 @@ When Claude updates a doc, the old version moves to `.archive/<topic>-<timestamp
 
 ## Networking
 
-- **MCP endpoint:** `http://0.0.0.0:8000/sse` (binds inside container)
-- **Access from Claude:** via Tailscale at `http://100.x.x.x:8000/sse` (replace with your Pi's Tailscale IP)
+- **MCP endpoint:** `http://0.0.0.0:8000/mcp` (binds inside container)
+- **Access from Claude:** via Tailscale at `http://100.x.x.x:8000/mcp` (replace with your Pi's Tailscale IP)
 - **Show control:** local MA3-Terminal bridge on your machine (no network hop)
 
 ## Constraints & notes

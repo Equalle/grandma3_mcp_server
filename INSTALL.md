@@ -130,9 +130,12 @@
 2. Click **Open Web UI** (if available) or manually test via curl:
    ```bash
    # From the Pi terminal
-   curl http://localhost:8000/sse
+   curl -X POST http://localhost:8000/mcp \
+     -H "Content-Type: application/json" \
+     -H "Accept: application/json, text/event-stream" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
    ```
-   - Should return a connection (might look like binary data if SSE connects)
+   - Should return a JSON-RPC response listing the available tools
 
 3. Check the **Logs** tab for any errors
 
@@ -157,8 +160,8 @@
 4. Configure:
    ```
    Name:     grandMA3 Docs (or whatever you like)
-   Type:     SSE (Server-Sent Events)
-   URL:      http://100.x.x.x:8000/sse
+   Type:     HTTP (streamable HTTP)
+   URL:      http://100.x.x.x:8000/mcp
    (replace 100.x.x.x with your Pi's Tailscale IP)
    ```
 5. Click **Add** / **Save**
@@ -228,7 +231,7 @@ Now Claude Code can access both:
 - Verify Tailscale is running on both Pi and your machine
 - Check the Tailscale IP: `tailscale status` on the Pi
 - Make sure your firewall allows port 8000
-- Test: `curl http://100.x.x.x:8000/sse` from your machine
+- Test: `curl http://100.x.x.x:8000/mcp` from your machine
 
 ### "Documentation directory not found"
 - SSH into the Pi and verify `/config/mcp_docs/` exists
@@ -257,7 +260,7 @@ Now Claude Code can access both:
 For issues:
 1. Check the **Logs** in the HA web UI
 2. Verify the docs directory exists and is writable
-3. Test connectivity: `curl http://100.x.x.x:8000/sse` from your machine
+3. Test connectivity: `curl http://100.x.x.x:8000/mcp` from your machine
 4. Review the README in the add-on for architecture details
 
 claude mcp remove grandma3
