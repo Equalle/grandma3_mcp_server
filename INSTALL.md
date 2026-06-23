@@ -264,4 +264,4 @@ For issues:
 4. Review the README in the add-on for architecture details
 
 claude mcp remove grandma3
-claude mcp add --transport http grandma3 http://100.106.68.4:8000/mcp
+claude mcp add --scope user --transport http grandma3 http://100.106.68.4:8000/mcp
