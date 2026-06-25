@@ -23,26 +23,26 @@ def list_topics() -> list[dict]:
 
 
 @mcp.tool()
-def get_doc(topic: str) -> str:
-    """Return full markdown content for a documentation topic."""
-    return docs.get_doc(topic)
+def get_doc(topic: str, full: bool = False) -> dict:
+    """Return a documentation topic's outline and summary by default; pass full=True for the complete markdown content."""
+    return docs.get_doc(topic, full)
 
 
 @mcp.tool()
-def search_docs(query: str) -> list[dict]:
-    """Full-text search across all documentation files."""
+def search_docs(query: str) -> dict:
+    """Full-text search across all documentation files. Returns the top 5 matches with truncated excerpts and a total_matches count."""
     return docs.search_docs(query)
 
 
 @mcp.tool()
-def list_files() -> list[str]:
-    """List all files in the docs directory."""
+def list_files() -> dict:
+    """List all files in the docs directory, capped to the first 50 entries with a total count."""
     return docs.list_files()
 
 
 @mcp.tool()
-def list_archives() -> list[str]:
-    """List all archived document versions."""
+def list_archives() -> dict:
+    """List all archived document versions, capped to the first 50 entries with a total count."""
     return docs.list_archives()
 
 
