@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -64,30 +65,36 @@ def get_doc(topic: str) -> str:
 
 
 def search_docs(query: str) -> list[dict]:
-    """Full-text search across all .md files; returns excerpts with topic names."""
-    query_lower = query.lower()
-    results = []
+    """Tokenized search across all .md files; ranks topics by number of matched query words."""
+    words = sorted(set(w.lower() for w in re.findall(r"\w+", query) if len(w) > 1))
+    if not words:
+        return []
 
+    results = []
     for md in sorted(DOCS_DIR.rglob("*.md")):
         if ".archive" in md.parts or ".proposals" in md.parts:
             continue
         text = md.read_text()
-        if query_lower not in text.lower():
+        text_lower = text.lower()
+        matched = [w for w in words if w in text_lower]
+        if not matched:
             continue
 
         rel = str(md.relative_to(DOCS_DIR).with_suffix(""))
         lines = text.splitlines()
         excerpts = []
         for i, line in enumerate(lines):
-            if query_lower in line.lower():
+            line_lower = line.lower()
+            if any(w in line_lower for w in matched):
                 start = max(0, i - 1)
                 end = min(len(lines), i + 2)
                 excerpts.append(" ".join(lines[start:end]).strip())
                 if len(excerpts) >= 3:
                     break
 
-        results.append({"topic": rel, "excerpts": excerpts})
+        results.append({"topic": rel, "matched_terms": matched, "excerpts": excerpts})
 
+    results.sort(key=lambda r: len(r["matched_terms"]), reverse=True)
     return results
 
 
@@ -116,6 +123,7 @@ def propose_doc_update(topic: str, new_content: str, description: str = "") -> d
     diff = "".join(difflib.unified_diff(old_lines, new_lines, fromfile=f"{topic} (current)", tofile=f"{topic} (proposed)"))
 
     proposal_file = PROPOSALS_DIR / f"{topic}.proposal.md"
+    proposal_file.parent.mkdir(parents=True, exist_ok=True)
     proposal_data = {
         "topic": topic,
         "description": description,
@@ -152,9 +160,11 @@ def apply_doc_update(topic: str, description: str = "") -> dict:
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         archive_name = f"{topic}-{timestamp}.md"
         archive_file = ARCHIVE_DIR / archive_name
+        archive_file.parent.mkdir(parents=True, exist_ok=True)
         archive_file.write_text(old_content)
 
     suffix = f"\n\n---\n*Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}. [See archive for previous versions](./.archive/)*"
+    file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(new_content + suffix)
 
     _update_index(topic, description or proposal_data.get("description", ""), filename)
