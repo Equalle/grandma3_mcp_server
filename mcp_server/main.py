@@ -45,8 +45,8 @@ version) -> `verified`. apply_doc_update applies only verified, non-stale propos
 another open one and add no lint errors (unclosed fence, broken link; `lint` on propose shows them).
 Readers see open proposals (pending_proposals) as unverified hints: confirm one you
 verified live, dispute_proposal one that is wrong. Never attach evidence you did not observe.
-Building a plugin UI: START with ui_recipes -- ready-made patterns proven in working plugins and live probes (dialog
-shell: open/run/close; title bar; OK/Cancel footer; toggle; tabs; text input; picker; radio; lists; dynamic rows;
+Building a plugin UI: START with ui_recipes -- ready-made patterns proven in working plugins and live probes (full-dialog:
+one complete working plugin dialog to copy and trim; dialog shell: open/run/close; title bar; OK/Cancel footer; toggle; tabs; text input; picker; radio; lists; dynamic rows;
 faders; confirm; handlers; cleanup), each with XML + Lua, what is native vs needs Lua, and pitfalls -- and the docs
 ui-plugin-overlay-root, ui-modal-shade, ui-plugin-layout-traps. Then ui_class for one class's full property list
 (types, allowed values, defaults, what MA3 itself sets), events, nesting, tested notes and probe images; ui_classes
@@ -194,7 +194,7 @@ def ui_classes(query: str = "", category: str = "", attr: str = "", limit: int =
 
 @mcp.tool()
 def ui_recipes(recipe: str = "", version: str = "") -> dict:
-    """START HERE to build a plugin UI: ready-made patterns proven in working plugins and live probes on the target MA3 version. Without recipe: the list (id, title, when to use, what is native vs needs Lua). recipe = an id (dialog-shell, button-row-footer, toggle, tabs, text-input, picker, radio-selector, simple-list, dynamic-rows, fader-bound, fader-unbound, confirm, handlers, lifetime) or a word from a title: the XML + Lua, the proof, the pitfalls, the classes (-> ui_class) and docs topics to read. dialog-shell is the window every other recipe goes into."""
+    """START HERE to build a plugin UI: ready-made patterns proven in working plugins and live probes on the target MA3 version. Without recipe: the list (id, title, when to use, what is native vs needs Lua). recipe = an id (full-dialog, dialog-shell, button-row-footer, toggle, tabs, text-input, picker, radio-selector, simple-list, dynamic-rows, fader-bound, fader-unbound, confirm, handlers, lifetime) or a word from a title: the XML + Lua, the proof, the pitfalls, the classes (-> ui_class) and docs topics to read. full-dialog is one complete, proven plugin dialog (tabs, text, toggles, radio, fader, list, OK/Cancel) -- copy it and trim; dialog-shell is the window every other recipe goes into."""
     return _ui(ui.ui_recipes, recipe, version)
 
 
