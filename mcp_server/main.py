@@ -42,7 +42,8 @@ Writes go through proposals: propose_section_update (one section -- preferred) /
 (whole topic or new topic) / propose_topic_change (delete, rename). A proposal is `untested` until live
 evidence is attached (evidence= on propose, or confirm_proposal later: what ran, what came back, MA3
 version) -> `verified`. apply_doc_update applies only verified, non-stale proposals that do not overlap
-another open one. Readers see open proposals (pending_proposals) as unverified hints: confirm one you
+another open one and add no lint errors (unclosed fence, broken link; `lint` on propose shows them).
+Readers see open proposals (pending_proposals) as unverified hints: confirm one you
 verified live, dispute_proposal one that is wrong. Never attach evidence you did not observe."""
 
 mcp = FastMCP("grandMA3 MCP Server", instructions=INSTRUCTIONS, host="0.0.0.0", port=8000, stateless_http=True)

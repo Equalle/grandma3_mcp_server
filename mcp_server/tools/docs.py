@@ -22,6 +22,11 @@ each, by id), section-level proposals, status untested -> verified (live
 evidence attached) / disputed, and apply only for verified, non-stale,
 non-overlapping proposals; readers see open proposals as unverified hints;
 applies commit with the evidence. See the "proposals (v1.4)" block below.
+
+v1.4.1: lint on apply. A doc/section proposal's result is linted against the
+current text; lint errors it would ADD (unclosed fence, broken link) refuse the
+apply, added warnings are applied and reported. Pre-existing issues never block.
+propose_* already shows the added issues.
 """
 
 import hashlib
@@ -604,7 +609,13 @@ def _after_propose(p: dict, diff: dict) -> dict:
     mine = next(a for a in _annotate(_load_all()) if a["id"] == p["id"])
     out = _brief(mine)
     out.update(diff)
-    if mine["_conflicts"]:
+    added = _proposal_lint(mine)
+    if added:
+        out["lint"] = added
+    if any(i["level"] == "error" for i in added):
+        out["hint"] = ("lint errors in the result -- apply is refused until they are fixed "
+                       "(re-propose with replaces=<id>)")
+    elif mine["_conflicts"]:
         out["hint"] = ("overlaps other open proposals on this topic -- apply is refused until only one "
                        "remains (reject_proposal the superseded one, or pass replaces=<id> when re-proposing)")
     elif out["status"] == "untested":
@@ -828,6 +839,16 @@ def apply_doc_update(topic: str = "", description: str = "", id: str = "") -> di
         old = _read(path) if path.exists() else None
         change = description or a.get("description", "")
 
+        added = []
+        if kind in ("doc", "section"):
+            new_content = _result_content(a, old)
+            added = _lint_added(topic, path, old, new_content)
+            errors = [i for i in added if i["level"] == "error"]
+            if errors:
+                return {"status": "error", "id": pid, "topic": topic, "lint": errors,
+                        "message": "Not applied -- the result would add lint errors; fix them and "
+                                   "re-propose with replaces=<id>."}
+
         if old is not None:
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             _atomic_write(_inside(ARCHIVE_DIR / f"{topic}-{stamp}.md", ARCHIVE_DIR), old)
@@ -865,14 +886,6 @@ def apply_doc_update(topic: str = "", description: str = "", id: str = "") -> di
             return {"status": "applied", "id": pid, "action": "rename", "topic": topic, "new_topic": new_topic,
                     "message": "Topic renamed.", "references": _references(topic)}
 
-        if kind == "section":
-            prefix, body = _body_split(old)
-            lines = body.splitlines()
-            s, e = a["_span"]
-            lines[s:e] = a["new_text"].rstrip("\n").splitlines()
-            new_content = prefix + "\n".join(lines).rstrip("\n") + "\n"
-        else:
-            new_content = _FOOTER_RE.sub("\n", a["new_content"]).rstrip("\n") + "\n"
         _atomic_write(path, new_content)
 
         entry = index.get(topic, {})
@@ -888,8 +901,12 @@ def apply_doc_update(topic: str = "", description: str = "", id: str = "") -> di
         pfile.unlink()
         _git_commit(_commit_message(f"{topic}: {change or 'update'}", a))
 
-    return {"status": "applied", "id": pid, "topic": topic, "kind": kind, "file": entry["file"],
-            "message": "Doc updated; previous version archived."}
+    out = {"status": "applied", "id": pid, "topic": topic, "kind": kind, "file": entry["file"],
+           "message": "Doc updated; previous version archived."}
+    if added:
+        out["lint"] = added
+        out["hint"] = "applied with new lint warnings -- fix them in a follow-up proposal"
+    return out
 
 
 def reject_proposal(topic: str = "", id: str = "") -> dict:
@@ -932,6 +949,72 @@ _LINK_RE = re.compile(r"\]\((?!https?:|#|mailto:)([^)\s#]+\.md)(?:#[^)]*)?\)")
 _TICK_REF_RE = re.compile(r"`([a-z0-9]+(?:-[a-z0-9.]+)+)`")
 
 
+def _lint_text(t: str, text: str, md_dir: Path, names: set, families: set) -> list[dict]:
+    """Content checks for one topic's text (no index/size checks)."""
+    issues = []
+
+    def add(level, msg):
+        issues.append({"level": level, "topic": t, "issue": msg})
+
+    meta, body = _split_frontmatter(text)
+    if not text.startswith("---\n"):
+        add("warn", "no frontmatter (title/status)")
+    else:
+        for key in ("title", "status"):
+            if not meta.get(key):
+                add("warn", f"frontmatter has no `{key}`")
+    if sum(1 for line in body.splitlines() if line.lstrip().startswith("```")) % 2:
+        add("error", "unclosed code fence")
+    if not any(line.startswith("# ") for line in body.splitlines()):
+        add("warn", "no H1 heading")
+    if _FOOTER_RE.search(text):
+        add("warn", "legacy 'Last updated' footer")
+    for m in _LINK_RE.finditer(body):
+        if not (md_dir / m.group(1)).resolve().exists():
+            add("error", f"broken link {m.group(1)}")
+    missing = sorted({m.group(1) for m in _TICK_REF_RE.finditer(body)
+                      if m.group(1).split("-")[0] in families and m.group(1) not in names
+                      and not re.search(r"\.[a-z]+$", m.group(1))})   # file names, not topics
+    if missing:
+        add("warn", "names topics that do not exist: " + ", ".join(missing[:8]))
+    return issues
+
+
+def _result_content(a: dict, old: str | None) -> str:
+    """The topic text a doc/section proposal would produce (annotated proposal)."""
+    if a.get("kind") == "section":
+        prefix, body = _body_split(old)
+        lines = body.splitlines()
+        s, e = a["_span"]
+        lines[s:e] = a["new_text"].rstrip("\n").splitlines()
+        return prefix + "\n".join(lines).rstrip("\n") + "\n"
+    return _FOOTER_RE.sub("\n", a["new_content"]).rstrip("\n") + "\n"
+
+
+def _lint_added(topic: str, path: Path, old: str | None, new: str) -> list[dict]:
+    """Lint issues the new text has that the current text does not (pre-existing
+    problems never block a proposal)."""
+    names = {t for t, _ in _topic_files()} | {topic}
+    families = {t.split("-")[0] for t in names}
+    before = {(i["level"], i["issue"]) for i in _lint_text(topic, old, path.parent, names, families)} if old else set()
+    return [i for i in _lint_text(topic, new, path.parent, names, families)
+            if (i["level"], i["issue"]) not in before]
+
+
+def _proposal_lint(a: dict) -> list[dict]:
+    """Issues a doc/section proposal would add; [] for other kinds or a stale section."""
+    if a.get("kind") not in ("doc", "section") or (a.get("kind") == "section" and not a.get("_span")):
+        return []
+    try:
+        path = _topic_file(a["topic"])
+    except DocError:
+        return []
+    old = _read(path) if path.exists() else None
+    if a.get("kind") == "section" and old is None:
+        return []
+    return _lint_added(a["topic"], path, old, _result_content(a, old))
+
+
 def lint_docs(topic: str = "") -> dict:
     """Read-only corpus check. error: broken structure or links; warn: missing
     metadata, references to topics that do not exist, stale proposals; info:
@@ -949,28 +1032,8 @@ def lint_docs(topic: str = "") -> dict:
         if topic and t != topic:
             continue
         text = _read(md)
-        meta, body = _split_frontmatter(text)
-        if not text.startswith("---\n"):
-            add("warn", t, "no frontmatter (title/status)")
-        else:
-            for key in ("title", "status"):
-                if not meta.get(key):
-                    add("warn", t, f"frontmatter has no `{key}`")
-        if sum(1 for line in body.splitlines() if line.lstrip().startswith("```")) % 2:
-            add("error", t, "unclosed code fence")
-        if not any(line.startswith("# ") for line in body.splitlines()):
-            add("warn", t, "no H1 heading")
-        if _FOOTER_RE.search(text):
-            add("warn", t, "legacy 'Last updated' footer")
-        for m in _LINK_RE.finditer(body):
-            target = (md.parent / m.group(1)).resolve()
-            if not target.exists():
-                add("error", t, f"broken link {m.group(1)}")
-        missing = sorted({m.group(1) for m in _TICK_REF_RE.finditer(body)
-                          if m.group(1).split("-")[0] in families and m.group(1) not in names
-                          and not re.search(r"\.[a-z]+$", m.group(1))})   # file names, not topics
-        if missing:
-            add("warn", t, "names topics that do not exist: " + ", ".join(missing[:8]))
+        meta, _ = _split_frontmatter(text)
+        issues.extend(_lint_text(t, text, md.parent, names, families))
         entry = index.get(t)
         if entry is None:
             add("error", t, "not in index.json")
