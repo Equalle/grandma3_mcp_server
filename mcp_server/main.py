@@ -5,9 +5,9 @@ import os
 from pathlib import Path
 
 import uvicorn
-from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp import FastMCP, Image
 
-from mcp_server.tools import docs
+from mcp_server.tools import docs, ui
 from mcp_server.resources import prompts
 
 
@@ -44,7 +44,11 @@ evidence is attached (evidence= on propose, or confirm_proposal later: what ran,
 version) -> `verified`. apply_doc_update applies only verified, non-stale proposals that do not overlap
 another open one and add no lint errors (unclosed fence, broken link; `lint` on propose shows them).
 Readers see open proposals (pending_proposals) as unverified hints: confirm one you
-verified live, dispute_proposal one that is wrong. Never attach evidence you did not observe."""
+verified live, dispute_proposal one that is wrong. Never attach evidence you did not observe.
+UI look: ui_examples lists MA3's own dialogs worth copying (screenshot <-> .uixml, by pattern); ui_view shows
+one with each widget's .uixml file:line; ui_find goes from something seen on screen to its source, ui_xml
+from a source line to where it is seen; search_uixml / resolve_color / resolve_icon cover the UI source,
+theme colours and icons."""
 
 mcp = FastMCP("grandMA3 MCP Server", instructions=INSTRUCTIONS, host="0.0.0.0", port=8000, stateless_http=True)
 
@@ -156,6 +160,68 @@ def apply_doc_update(id: str = "", description: str = "", topic: str = "") -> di
 def reject_proposal(id: str = "", topic: str = "") -> dict:
     """Discard a proposal (by id, or a topic's only open one)."""
     return docs.reject_proposal(topic, id)
+
+
+# --- UI reference: native MA3 screenshots <-> .uixml source, colours, icons ---
+
+def _with_image(info: dict, png: bytes | None) -> list:
+    return [info, Image(data=png, format="png")] if png else [info]
+
+
+def _ui(fn, *args):
+    try:
+        return fn(*args)
+    except FileNotFoundError as e:
+        return {"error": str(e)}
+
+
+def _ui_img(fn, *args) -> list:
+    try:
+        return _with_image(*fn(*args))
+    except FileNotFoundError as e:
+        return [{"error": str(e)}]
+
+
+@mcp.tool()
+def ui_examples(pattern: str = "", version: str = "") -> dict:
+    """START HERE for building a plugin UI that looks native: the reviewed set of MA3's own menus/dialogs whose look the .uixml explains (one per layout), each with what it shows, its UI patterns and its .uixml file. pattern filters (tabs, property-form, toggles, swipe-buttons, buttons, text-input, radio, faders, colour-appearance, grid-table, scroll-list, auto-layout, main-dialog, resize-split, pool-tiles). version = MA3 version prefix (default: newest)."""
+    return _ui(ui.ui_examples, pattern, version)
+
+
+@mcp.tool()
+def ui_find(query: str, limit: int = 10, kind: str = "", version: str = "") -> dict:
+    """Find where something visible on the MA3 screen is: searches widget text, Name, class and menu name in the reference screenshots (all words must match). Each hit gives the menu, state, widget rect and its .uixml file:line (or the element that builds it at runtime), plus the ui_view call that shows it. kind = menu|window|settings|editor."""
+    return _ui(ui.ui_find, query, limit, kind, version)
+
+
+@mcp.tool(structured_output=False)
+def ui_view(menu: str, state: str = "", widget: str = "", pad: int = 24, scale: float = 0.0, version: str = "") -> list:
+    """Screenshot of a reference menu (a state = one of its tabs) with a legend: every labelled widget's rect IN THIS IMAGE and its .uixml file:line. widget = id, Name or Text crops to that widget (+pad px). scale shrinks the image (default: fit 1600 px)."""
+    return _ui_img(ui.ui_view, menu, state, widget, pad, scale, version)
+
+
+@mcp.tool(structured_output=False)
+def ui_xml(file: str, line: int = 0, context: int = 10, show: bool = False, version: str = "") -> list:
+    """Open a lib_menus .uixml (path relative to lib_menus, or a unique file name): without line = head + which lines appear on screen; with line = the element in context + where it is seen (menu, state, rect). show=True adds a crop of it from the screenshot."""
+    return _ui_img(ui.ui_xml, file, line, context, show, version)
+
+
+@mcp.tool()
+def search_uixml(query: str, limit: int = 30, files: str = "uixml", version: str = "") -> dict:
+    """Search MA3's own UI source (lib_menus): case-insensitive, all words on the same line; "re:<regex>" for a regex. files = uixml | lua | xml | all. Use it to find how MA3 writes an attribute, class or handler; ui_xml(file, line) then shows the element and where it appears on screen."""
+    return _ui(ui.search_uixml, query, limit, files, version)
+
+
+@mcp.tool(structured_output=False)
+def resolve_color(token: str, limit: int = 40, version: str = "") -> list:
+    """A colour token of the default theme (e.g. "Global.Transparent", "Button.Background"): its RGBA, the ColorDefRef chain and a swatch. A partial word lists matching tokens."""
+    return _ui_img(ui.resolve_color, token, limit, version)
+
+
+@mcp.tool(structured_output=False)
+def resolve_icon(name: str, limit: int = 40, version: str = "") -> list:
+    """A texture/icon name as used in Icon= / Texture= (graphics.textures.xml): kind, file, size and the rendered image. A partial word lists matching names."""
+    return _ui_img(ui.resolve_icon, name, limit, version)
 
 
 # --- Prompt resources ---
