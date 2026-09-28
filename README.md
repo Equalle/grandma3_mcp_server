@@ -68,16 +68,21 @@ grandma3-mcp-addon/
 ## MCP Tools
 
 ### Read documentation
-- `list_topics()` — all indexed topics with descriptions
-- `get_doc(topic)` — full markdown for a topic
-- `search_docs(query)` — full-text search with excerpts
-- `list_files()` — all doc files
-- `list_archives()` — all archived versions
+- `list_topics()` — all indexed topics with a one-line summary
+- `get_doc(topic, full=False, section="")` — outline + summary; `full=True` for the markdown; `section="<heading>"` for one section (exact/prefix/substring match, numbering optional)
+- `get_docs(topics, full=False, section="")` — up to 8 topics in one call (full content capped at 60k chars)
+- `search_docs(query, limit=5)` — BM25 over sections: whole words, identifier parts (`GetPresetDataFast` → get/preset/data/fast), plural-insensitive, title/heading/verified-status boosts; each result lists its best sections + excerpt. In-memory index, rebuilt when a file changes (~0.3 s build, ~20 ms/query on 126 topics)
+- `lint_docs(topic="")` — read-only corpus check (broken links/fences/index entries, missing frontmatter, references to missing topics, stale proposals, placeholder summaries, very large topics)
+- `list_files()`, `list_archives(topic)`, `get_archive(name)` — files and version history (paged)
+- `list_proposals()`, `get_proposal(topic)` — pending drafts; the latter with the full diff
 
-### Propose & apply updates
-- `propose_doc_update(topic, new_content, description)` — shows diff, waits for approval
-- `apply_doc_update(topic, description)` — archives old version, writes new, updates index
+### Propose & apply updates (nothing changes before apply)
+- `propose_doc_update(topic, new_content, description, summary)` — draft an edit or a new topic, returns the diff
+- `propose_topic_change(topic, action, new_topic, description)` — draft `delete` or `rename`; returns the topics that reference it. Merge = edit on the target + delete of the source
+- `apply_doc_update(topic, description)` — apply any pending proposal: archives the old version, writes the result, updates the index, commits (refused if the topic changed since the draft)
 - `reject_proposal(topic)` — discard a proposal
+
+The server also sends MCP `instructions` (routing: `index` → `search_docs` → section fetch; approval rule for writes).
 
 ### MCP Prompts
 - `grandma3_expert` — expert operator persona (injects architecture docs at runtime)

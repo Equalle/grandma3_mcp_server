@@ -12,6 +12,10 @@ Safety properties (v1.2):
     last change note as the description.
   * No footer is injected into content any more; `updated` lives in the index.
   * If DOCS_DIR is a git repository, every apply/reject is committed.
+
+v1.3: section-level BM25 search (search.py), section fetch, multi-topic fetch,
+get_proposal (full diff), lint_docs, and rename/delete proposals that go through
+the same apply_doc_update approval step as content edits.
 """
 
 import hashlib
@@ -24,6 +28,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from mcp_server.tools import search as _search
+
 log = logging.getLogger(__name__)
 
 DOCS_DIR = Path(os.environ.get("MCP_DOCS_DIR", "/config/mcp_docs"))
@@ -35,8 +41,12 @@ LIST_LIMIT = 50
 SUMMARY_CHAR_LIMIT = 300
 TOPIC_SUMMARY_LIMIT = 200
 SEARCH_RESULT_LIMIT = 5
-EXCERPT_CHAR_LIMIT = 150
+SEARCH_RESULT_MAX = 15
+GET_DOCS_MAX = 8
+GET_DOCS_FULL_CHARS = 60000
 DIFF_LINE_LIMIT = 100
+PROPOSAL_DIFF_LINE_LIMIT = 400
+LARGE_DOC_CHARS = 40000
 NEW_DOC_PREVIEW_CHAR_LIMIT = 300
 
 _LOCK = threading.RLock()
@@ -150,10 +160,17 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
 
 
 def _derive_summary(text: str) -> str:
+    """What the topic covers: frontmatter summary/description, else its
+    `**Scope:**` line, else the title / H1."""
     meta, body = _split_frontmatter(text)
-    for key in ("summary", "description", "title"):
+    for key in ("summary", "description"):
         if meta.get(key):
             return meta[key][:TOPIC_SUMMARY_LIMIT]
+    m = re.search(r"^\*\*Scope:\*\*\s*(.+(?:\n(?!\*\*|\s*$|#).+)*)", body, re.M)
+    if m:
+        return " ".join(m.group(1).split())[:TOPIC_SUMMARY_LIMIT]
+    if meta.get("title"):
+        return meta["title"][:TOPIC_SUMMARY_LIMIT]
     for line in body.splitlines():
         if line.startswith("# "):
             return line[2:].strip()[:TOPIC_SUMMARY_LIMIT]
@@ -161,15 +178,45 @@ def _derive_summary(text: str) -> str:
 
 
 def _outline(body: str) -> list[str]:
+    return [line for _, _, line in _headings(body)]
+
+
+def _headings(body: str) -> list[tuple[int, int, str]]:
+    """(line index, level, heading line) for every heading outside code fences."""
     out, fenced = [], False
-    for line in body.splitlines():
+    for i, line in enumerate(body.splitlines()):
         s = line.strip()
         if s.startswith("```"):
             fenced = not fenced
             continue
-        if not fenced and re.match(r"^#{1,6} ", s):
-            out.append(s)
+        m = None if fenced else re.match(r"^(#{1,6}) +\S", s)
+        if m:
+            out.append((i, len(m.group(1)), s))
     return out
+
+
+def _heading_key(heading_line: str) -> str:
+    return re.sub(r"^#+\s*", "", heading_line).strip().lower()
+
+
+def _find_section(body: str, section: str):
+    """The section whose heading best matches `section` (exact, then prefix, then
+    substring; numbering like '§5' or '5.' may be omitted). Returns (heading,
+    line number, text incl. subsections) or None."""
+    q = re.sub(r"^#+\s*", "", section or "").strip().lower()
+    if not q:
+        return None
+    heads = _headings(body)
+    bare = lambda h: re.sub(r"^(§\s*)?[\d.]+[.)]?\s+", "", h)
+    for test in (lambda h: h == q or bare(h) == q,
+                 lambda h: h.startswith(q) or bare(h).startswith(q),
+                 lambda h: q in h):
+        for n, (i, level, line) in enumerate(heads):
+            if test(_heading_key(line)):
+                end = next((j for j, lv, _ in heads[n + 1:] if lv <= level), None)
+                lines = body.splitlines()
+                return line, i + 1, "\n".join(lines[i:end]).rstrip() + "\n"
+    return None
 
 
 # --------------------------------------------------------------------------- index
@@ -237,7 +284,7 @@ def list_topics() -> list[dict]:
             for k, v in _index().items()]
 
 
-def get_doc(topic: str, full: bool = False) -> dict:
+def get_doc(topic: str, full: bool = False, section: str = "") -> dict:
     try:
         path = _topic_file(topic)
     except DocError as exc:
@@ -245,9 +292,16 @@ def get_doc(topic: str, full: bool = False) -> dict:
     if not path.exists():
         return {"topic": topic, "error": f"Topic '{topic}' not found."}
     text = _read(path)
+    meta, body = _split_frontmatter(text)
+    if section:
+        hit = _find_section(body, section)
+        if not hit:
+            return {"topic": topic, "error": f"No section matching {section!r}.", "outline": _outline(body)}
+        heading, line, content = hit
+        return {"topic": topic, "section": heading, "line": line, "content": content,
+                "status": meta.get("status", "")}
     if full:
         return {"topic": topic, "content": text}
-    meta, body = _split_frontmatter(text)
     plain = [s.strip() for s in body.splitlines() if s.strip() and not s.strip().startswith("#")]
     summary = " ".join(plain)
     if len(summary) > SUMMARY_CHAR_LIMIT:
@@ -262,32 +316,41 @@ def get_doc(topic: str, full: bool = False) -> dict:
     }
 
 
-def search_docs(query: str) -> dict:
-    """Tokenized search across all topics; ranks by number of matched query words."""
-    words = sorted(set(w.lower() for w in re.findall(r"\w+", query or "") if len(w) > 1))
-    if not words:
-        return {"results": [], "total_matches": 0}
-    results = []
-    for md in _visible_md():
-        text = _read(md)
-        text_lower = text.lower()
-        matched = [w for w in words if w in text_lower]
-        if not matched:
+def get_docs(topics: list, full: bool = False, section: str = "") -> dict:
+    """Several topics in one call (outline mode by default). Full content is capped
+    at GET_DOCS_FULL_CHARS in total; topics past the cap are listed as omitted."""
+    topics = [t for t in (topics or []) if isinstance(t, str)]
+    docs, omitted, used = [], [], 0
+    for t in topics[:GET_DOCS_MAX]:
+        d = get_doc(t, full=full, section=section)
+        size = len(d.get("content", ""))
+        if size and used + size > GET_DOCS_FULL_CHARS and docs:
+            omitted.append(t)
             continue
-        lines = text.splitlines()
-        excerpts = []
-        for i, line in enumerate(lines):
-            if any(w in line.lower() for w in matched):
-                excerpt = " ".join(lines[max(0, i - 1):min(len(lines), i + 2)]).strip()
-                if len(excerpt) > EXCERPT_CHAR_LIMIT:
-                    excerpt = excerpt[:EXCERPT_CHAR_LIMIT] + "…"
-                excerpts.append(excerpt)
-                if len(excerpts) >= 3:
-                    break
-        rel = str(md.relative_to(DOCS_DIR).with_suffix("")).replace("\\", "/")
-        results.append({"topic": rel, "matched_terms": matched, "excerpts": excerpts})
-    results.sort(key=lambda r: len(r["matched_terms"]), reverse=True)
-    return {"results": results[:SEARCH_RESULT_LIMIT], "total_matches": len(results)}
+        used += size
+        docs.append(d)
+    out = {"docs": docs}
+    if omitted:
+        out["omitted"] = omitted
+        out["hint"] = "response size cap reached: fetch the omitted topics separately or by section"
+    if len(topics) > GET_DOCS_MAX:
+        out["not_fetched"] = topics[GET_DOCS_MAX:]
+    return out
+
+
+def _topic_files() -> list[tuple[str, Path]]:
+    return [(str(md.relative_to(DOCS_DIR).with_suffix("")).replace("\\", "/"), md) for md in _visible_md()]
+
+
+_SEARCH = _search.SearchIndex(_split_frontmatter)
+
+
+def search_docs(query: str, limit: int = SEARCH_RESULT_LIMIT) -> dict:
+    """Section-level BM25 search (see search.py). Each result names its best
+    sections; get_doc(topic, section=<heading>) fetches one."""
+    limit = max(1, min(int(limit or SEARCH_RESULT_LIMIT), SEARCH_RESULT_MAX))
+    _SEARCH.ensure(_topic_files())
+    return _SEARCH.search(query, limit)
 
 
 def list_files(offset: int = 0) -> dict:
@@ -356,20 +419,89 @@ def propose_doc_update(topic: str, new_content: str, description: str = "", summ
             preview += "…"
         result.update({"diff": None, "new_doc_preview": preview, "new_doc_lines": len(new_content.splitlines())})
         return result
-    if old == new_content:
-        result["diff"] = "(no changes)"
-        return result
-    import difflib
-    diff = list(difflib.unified_diff(old.splitlines(keepends=True), new_content.splitlines(keepends=True),
-                                     fromfile=f"{topic} (current)", tofile=f"{topic} (proposed)"))
-    result["diff"] = "".join(diff[:DIFF_LINE_LIMIT])
-    if len(diff) > DIFF_LINE_LIMIT:
-        result.update({"diff_truncated": True, "diff_total_lines": len(diff)})
+    result.update(_diff(topic, old, new_content, DIFF_LINE_LIMIT))
     return result
 
 
+def _diff(topic: str, old: str, new: str, limit: int) -> dict:
+    if old == new:
+        return {"diff": "(no changes)"}
+    import difflib
+    diff = list(difflib.unified_diff(old.splitlines(keepends=True), new.splitlines(keepends=True),
+                                     fromfile=f"{topic} (current)", tofile=f"{topic} (proposed)"))
+    out = {"diff": "".join(diff[:limit])}
+    if len(diff) > limit:
+        out.update({"diff_truncated": True, "diff_total_lines": len(diff)})
+    return out
+
+
+def _references(name: str, exclude: str = "") -> list[str]:
+    """Topics whose text names `name` as a whole token (e.g. `name` or name.md)."""
+    pat = re.compile(r"(?<![\w/-])" + re.escape(name) + r"(?![\w-])")
+    return [t for t, md in _topic_files() if t != exclude and pat.search(_read(md))]
+
+
+def propose_topic_change(topic: str, action: str, new_topic: str = "", description: str = "") -> dict:
+    """Draft a delete or rename. Applied (after approval) by apply_doc_update, like a content edit."""
+    with _LOCK:
+        try:
+            path = _topic_file(topic)
+            proposal_file = _proposal_file(topic)
+            if action == "rename":
+                _check_topic(new_topic)
+        except DocError as exc:
+            return {"topic": topic, "status": "error", "message": str(exc)}
+        if action not in ("delete", "rename"):
+            return {"topic": topic, "status": "error", "message": "action must be 'delete' or 'rename'."}
+        if not path.exists():
+            return {"topic": topic, "status": "error", "message": f"Topic '{topic}' not found."}
+        if action == "rename" and (new_topic in _index() or _topic_file(new_topic, {}).exists()):
+            return {"topic": topic, "status": "error", "message": f"Topic '{new_topic}' already exists."}
+        _ensure_dirs()
+        replaced_pending = proposal_file.exists()
+        _atomic_write(proposal_file, json.dumps({
+            "topic": topic, "action": action, "new_topic": new_topic if action == "rename" else "",
+            "description": description, "proposed_at": datetime.now().isoformat(),
+            "base_sha256": _sha(_read(path)),
+        }, indent=2, ensure_ascii=False))
+    result = {"topic": topic, "status": "pending_review", "action": action,
+              "references": _references(topic, exclude=topic)}
+    if action == "rename":
+        result["new_topic"] = new_topic
+    if replaced_pending:
+        result["replaced_pending_proposal"] = True
+    result["hint"] = ("topics in `references` still name the old topic -- propose edits for them "
+                      "after this is applied (lint_docs lists broken references)")
+    return result
+
+
+def get_proposal(topic: str) -> dict:
+    """One pending proposal with its full diff (up to PROPOSAL_DIFF_LINE_LIMIT lines)."""
+    try:
+        path = _topic_file(topic)
+        proposal_file = _proposal_file(topic)
+    except DocError as exc:
+        return {"topic": topic, "error": str(exc)}
+    if not proposal_file.exists():
+        return {"topic": topic, "error": f"No proposal found for '{topic}'."}
+    p = json.loads(_read(proposal_file))
+    current = _read(path) if path.exists() else None
+    out = {"topic": topic, "action": p.get("action", "update"), "description": p.get("description", ""),
+           "summary": p.get("summary", ""), "proposed_at": p.get("proposed_at", ""),
+           "stale": "base_sha256" in p and p["base_sha256"] != _sha(current), "new_doc": current is None}
+    if out["action"] == "rename":
+        out["new_topic"] = p.get("new_topic", "")
+    elif out["action"] == "update":
+        if current is None:
+            out["new_content"] = p["new_content"][:GET_DOCS_FULL_CHARS]
+        else:
+            out.update(_diff(topic, current, p["new_content"], PROPOSAL_DIFF_LINE_LIMIT))
+    return out
+
+
 def apply_doc_update(topic: str, description: str = "") -> dict:
-    """Apply a pending proposal: archive the old version, write the new one, update the index."""
+    """Apply a pending proposal (edit, new topic, delete or rename): archive the old
+    version, write the result, update the index, commit."""
     with _LOCK:
         try:
             path = _topic_file(topic)
@@ -392,12 +524,46 @@ def apply_doc_update(topic: str, description: str = "") -> dict:
             stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
             _atomic_write(_inside(ARCHIVE_DIR / f"{topic}-{stamp}.md", ARCHIVE_DIR), old)
 
+        action = proposal.get("action", "update")
+        change = description or proposal.get("description", "")
+        index = _index()
+        if action == "delete":
+            if old is None:
+                return {"status": "error", "topic": topic, "message": f"Topic '{topic}' not found."}
+            path.unlink()
+            index.pop(topic, None)
+            _write_index(index)
+            proposal_file.unlink()
+            _git_commit(f"{topic}: deleted{' -- ' + change if change else ''}")
+            return {"status": "applied", "action": "delete", "topic": topic,
+                    "message": "Topic deleted; last version archived.",
+                    "references": _references(topic)}
+        if action == "rename":
+            new_topic = proposal.get("new_topic", "")
+            try:
+                new_path = _topic_file(new_topic, {})
+            except DocError as exc:
+                return {"status": "error", "topic": topic, "message": str(exc)}
+            if old is None or new_topic in index or new_path.exists():
+                return {"status": "error", "topic": topic,
+                        "message": f"Cannot rename: '{topic}' missing or '{new_topic}' already exists."}
+            new_path.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(path, new_path)
+            entry = index.pop(topic, {})
+            entry.update({"file": str(new_path.relative_to(DOCS_DIR.resolve())).replace("\\", "/"),
+                          "last_change": change or f"renamed from {topic}",
+                          "updated": datetime.now().isoformat()})
+            index[new_topic] = entry
+            _write_index(index)
+            proposal_file.unlink()
+            _git_commit(f"{topic} -> {new_topic}: renamed{' -- ' + change if change else ''}")
+            return {"status": "applied", "action": "rename", "topic": topic, "new_topic": new_topic,
+                    "message": "Topic renamed.", "references": _references(topic)}
+
         new_content = _FOOTER_RE.sub("\n", proposal["new_content"]).rstrip("\n") + "\n"
         _atomic_write(path, new_content)
 
-        index = _index()
         entry = index.get(topic, {})
-        change = description or proposal.get("description", "")
         entry.update({
             "summary": proposal.get("summary") or entry.get("summary") or _derive_summary(new_content),
             "last_change": change,
@@ -438,9 +604,77 @@ def list_proposals() -> dict:
             path = _topic_file(topic)
             current = _read(path) if path.exists() else None
             stale = "base_sha256" in p and p["base_sha256"] != _sha(current)
-            out.append({"topic": topic, "description": p.get("description", ""),
-                        "proposed_at": p.get("proposed_at", ""), "stale": stale,
-                        "new_doc": current is None})
+            item = {"topic": topic, "action": p.get("action", "update"), "description": p.get("description", ""),
+                    "proposed_at": p.get("proposed_at", ""), "stale": stale, "new_doc": current is None}
+            if p.get("new_topic"):
+                item["new_topic"] = p["new_topic"]
+            out.append(item)
         except Exception as exc:  # noqa: BLE001
             out.append({"file": str(pf.name), "error": str(exc)})
     return {"proposals": out, "total": len(out)}
+
+
+# --------------------------------------------------------------------------- lint
+
+_LINK_RE = re.compile(r"\]\((?!https?:|#|mailto:)([^)\s#]+\.md)(?:#[^)]*)?\)")
+_TICK_REF_RE = re.compile(r"`([a-z0-9]+(?:-[a-z0-9.]+)+)`")
+
+
+def lint_docs(topic: str = "") -> dict:
+    """Read-only corpus check. error: broken structure or links; warn: missing
+    metadata, references to topics that do not exist, stale proposals; info:
+    placeholder summaries, very large topics."""
+    index = _index()
+    files = _topic_files()
+    names = {t for t, _ in files}
+    families = {t.split("-")[0] for t in names}
+    issues = []
+
+    def add(level, t, msg):
+        issues.append({"level": level, "topic": t, "issue": msg})
+
+    for t, md in files:
+        if topic and t != topic:
+            continue
+        text = _read(md)
+        meta, body = _split_frontmatter(text)
+        if not text.startswith("---\n"):
+            add("warn", t, "no frontmatter (title/status)")
+        else:
+            for key in ("title", "status"):
+                if not meta.get(key):
+                    add("warn", t, f"frontmatter has no `{key}`")
+        if sum(1 for line in body.splitlines() if line.lstrip().startswith("```")) % 2:
+            add("error", t, "unclosed code fence")
+        if not any(line.startswith("# ") for line in body.splitlines()):
+            add("warn", t, "no H1 heading")
+        if _FOOTER_RE.search(text):
+            add("warn", t, "legacy 'Last updated' footer")
+        for m in _LINK_RE.finditer(body):
+            target = (md.parent / m.group(1)).resolve()
+            if not target.exists():
+                add("error", t, f"broken link {m.group(1)}")
+        missing = sorted({m.group(1) for m in _TICK_REF_RE.finditer(body)
+                          if m.group(1).split("-")[0] in families and m.group(1) not in names
+                          and not re.search(r"\.[a-z]+$", m.group(1))})   # file names, not topics
+        if missing:
+            add("warn", t, "names topics that do not exist: " + ", ".join(missing[:8]))
+        entry = index.get(t)
+        if entry is None:
+            add("error", t, "not in index.json")
+        elif (entry.get("summary") or "") in ("", meta.get("title", "")):
+            add("info", t, "index summary is empty or just the title")
+        if len(text) > LARGE_DOC_CHARS:
+            add("info", t, f"{len(text)} chars -- consider splitting or section fetches")
+    if not topic:
+        for t in index:
+            if t not in names:
+                add("error", t, "index entry without a file")
+        for p in list_proposals()["proposals"]:
+            if p.get("stale"):
+                add("warn", p.get("topic", "?"), "pending proposal is stale (topic changed since the draft)")
+    order = {"error": 0, "warn": 1, "info": 2}
+    issues.sort(key=lambda i: (order[i["level"]], i["topic"]))
+    counts = {lv: sum(1 for i in issues if i["level"] == lv) for lv in order}
+    return {"topics_checked": 1 if topic else len(files), "counts": counts,
+            "issues": issues[:LIST_LIMIT * 2], "truncated": len(issues) > LIST_LIMIT * 2}

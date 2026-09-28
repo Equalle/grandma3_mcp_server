@@ -32,7 +32,15 @@ log = logging.getLogger("grandma3-mcp")
 
 # stateless_http: avoids server-side session tracking entirely, so an addon
 # restart can never leave a client stuck retrying a now-unknown session ID.
-mcp = FastMCP("grandMA3 MCP Server", host="0.0.0.0", port=8000, stateless_http=True)
+INSTRUCTIONS = """grandMA3 reference docs (commands, Lua API, plugin/UI development, live-verified workflows).
+Route: get_doc("index") first -- it maps tasks to topics. Then search_docs with 1-3 exact terms
+(API names, keywords); each result names its best sections -- fetch one with get_doc(topic, section=...)
+instead of the whole topic. get_docs(topics) reads several outlines at once.
+Base answers on what the docs say; if they do not cover it, say so.
+Writes: propose_doc_update / propose_topic_change draft only; apply_doc_update only for items the user approved.
+Status in frontmatter: live-verified/verified > draft; treat draft as manual-derived and unverified."""
+
+mcp = FastMCP("grandMA3 MCP Server", instructions=INSTRUCTIONS, host="0.0.0.0", port=8000, stateless_http=True)
 
 
 # --- Documentation tools (read) ---
@@ -44,15 +52,27 @@ def list_topics() -> list[dict]:
 
 
 @mcp.tool()
-def get_doc(topic: str, full: bool = False) -> dict:
-    """Return a topic's frontmatter, outline and summary by default; pass full=True for the complete markdown content."""
-    return docs.get_doc(topic, full)
+def get_doc(topic: str, full: bool = False, section: str = "") -> dict:
+    """Return a topic's frontmatter, outline and summary by default; full=True for the complete markdown; section="<heading text>" (exact, prefix or substring, numbering optional) for just that section incl. its subsections."""
+    return docs.get_doc(topic, full, section)
 
 
 @mcp.tool()
-def search_docs(query: str) -> dict:
-    """Full-text search across all documentation topics. Returns the top 5 matches with truncated excerpts and a total_matches count."""
-    return docs.search_docs(query)
+def get_docs(topics: list[str], full: bool = False, section: str = "") -> dict:
+    """Several topics in one call (max 8): outline+summary by default, full=True for content (capped at 60k chars total; the rest listed as omitted), or the same section of each."""
+    return docs.get_docs(topics, full, section)
+
+
+@mcp.tool()
+def search_docs(query: str, limit: int = 5) -> dict:
+    """Ranked search (BM25 over sections; whole words, identifier parts, plural-insensitive; title/heading/verified boosts). Use 1-3 exact terms. Each result lists its best-matching sections with excerpts -- fetch one with get_doc(topic, section=heading). limit max 15."""
+    return docs.search_docs(query, limit)
+
+
+@mcp.tool()
+def lint_docs(topic: str = "") -> dict:
+    """Read-only corpus check (all topics, or one): broken links/fences/index entries (error), missing frontmatter, references to non-existent topics, stale proposals (warn), placeholder summaries and very large topics (info)."""
+    return docs.lint_docs(topic)
 
 
 @mcp.tool()
@@ -79,6 +99,12 @@ def list_proposals() -> dict:
     return docs.list_proposals()
 
 
+@mcp.tool()
+def get_proposal(topic: str) -> dict:
+    """One pending proposal in full: action, description, stale flag and the complete diff (up to 400 lines) -- for reviewing before apply."""
+    return docs.get_proposal(topic)
+
+
 # --- Documentation tools (write with approval) ---
 
 @mcp.tool()
@@ -88,8 +114,14 @@ def propose_doc_update(topic: str, new_content: str, description: str = "", summ
 
 
 @mcp.tool()
+def propose_topic_change(topic: str, action: str, new_topic: str = "", description: str = "") -> dict:
+    """Draft deleting (action="delete") or renaming (action="rename", new_topic=...) a topic. Returns the topics that reference it. Nothing changes until apply_doc_update. Merge = propose_doc_update on the target + propose_topic_change delete on the source."""
+    return docs.propose_topic_change(topic, action, new_topic, description)
+
+
+@mcp.tool()
 def apply_doc_update(topic: str, description: str = "") -> dict:
-    """Apply a proposed doc update the user approved: archives the old version, writes the new one, updates the index. Refused if the topic changed after the proposal was drafted."""
+    """Apply a pending proposal the user approved (edit, new topic, delete or rename): archives the old version, writes the result, updates the index. Refused if the topic changed after the proposal was drafted."""
     return docs.apply_doc_update(topic, description)
 
 
