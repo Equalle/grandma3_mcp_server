@@ -1,6 +1,6 @@
 name: "grandMA3 MCP Server"
 description: "grandMA3 documentation server for Claude (MCP over streamable HTTP)"
-version: "1.8.1"
+version: "1.8.2"
 slug: "grandma3_mcp_server"
 init: false
 arch:

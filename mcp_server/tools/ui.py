@@ -294,7 +294,7 @@ def ui_recipes(recipe: str = "", version: str = "") -> dict:
     if not recipe:
         return {"version": ver, "recipes": [{"id": r["id"], "title": r["title"], "use_when": r.get("use_when"),
                                               "native": r.get("native"), "needs_lua": r.get("needs_lua")} for r in R],
-                "start": "dialog-shell is the window every other recipe goes into",
+                "start": "full-dialog = one complete, proven plugin dialog to copy and trim; dialog-shell is the window every other recipe goes into",
                 "next": "ui_recipes(recipe=<id>) for the XML + Lua, what proves it and the pitfalls; "
                         "ui_class(<class>) for every property of a class used in it"}
     q = recipe.lower()
