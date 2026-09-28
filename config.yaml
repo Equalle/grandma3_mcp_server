@@ -1,6 +1,6 @@
 name: "grandMA3 MCP Server"
-description: "MCP server exposing grandMA3 documentation and console control over streamable HTTP"
-version: "1.1.0"
+description: "grandMA3 documentation server for Claude (MCP over streamable HTTP)"
+version: "1.2.0"
 slug: "grandma3_mcp_server"
 init: false
 arch:
@@ -10,13 +10,11 @@ ports:
 ports_description:
   8000/tcp: "MCP streamable HTTP endpoint"
 options:
-  ma3_host: "192.168.1.100"
-  ma3_port: 30000
+  auth_token: ""
   log_level: "info"
 schema:
-  ma3_host: str
-  ma3_port: int
-  log_level: str
+  auth_token: password?
+  log_level: list(debug|info|warning|error)
 map:
   - config:rw
 homeassistant_api: false

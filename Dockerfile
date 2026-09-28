@@ -1,7 +1,8 @@
 ARG BUILD_FROM
 FROM $BUILD_FROM
 
-RUN apk add --no-cache python3 py3-pip
+# git: the server commits every doc apply/reject when /config/mcp_docs is a repo.
+RUN apk add --no-cache git
 
 WORKDIR /app
 
