@@ -276,11 +276,33 @@ def ui_xml(file: str, line: int = 0, context: int = 10, show: bool = False,
 # hand-tested facts (MA3-Terminal tools/ui-tested.json: per-property effect/notes, per-class notes + probe images under
 # <ver>/images/<Class>/).
 @lru_cache(maxsize=4)
-def _classes(ver: str) -> dict:
+def _class_file(ver: str) -> dict:
     f = UI_ROOT / ver / "classes.json"
     if not f.is_file():
         raise FileNotFoundError(f"no classes.json for {ver} under {UI_ROOT}")
-    return json.loads(f.read_text(encoding="utf-8"))["classes"]
+    return json.loads(f.read_text(encoding="utf-8"))
+
+
+def _classes(ver: str) -> dict:
+    return _class_file(ver)["classes"]
+
+
+def ui_recipes(recipe: str = "", version: str = "") -> dict:
+    """Ready-made patterns for a plugin's own UI (MA3-Terminal tools/ui-recipes.json): list, or one in full."""
+    ver = _cver(version)
+    R = _class_file(ver).get("recipes") or []
+    if not recipe:
+        return {"version": ver, "recipes": [{"id": r["id"], "title": r["title"], "use_when": r.get("use_when"),
+                                              "native": r.get("native"), "needs_lua": r.get("needs_lua")} for r in R],
+                "start": "dialog-shell is the window every other recipe goes into",
+                "next": "ui_recipes(recipe=<id>) for the XML + Lua, what proves it and the pitfalls; "
+                        "ui_class(<class>) for every property of a class used in it"}
+    q = recipe.lower()
+    r = next((x for x in R if x["id"] == q), None) or next((x for x in R if q in x["id"] or q in x["title"].lower()), None)
+    if not r:
+        return {"error": f"no recipe {recipe!r}", "recipes": [x["id"] for x in R]}
+    return {"version": ver, **{k: v for k, v in r.items() if v not in ("", [], None)},
+            "next": "ui_class(<class>) for a class's full property list; the docs topics listed under docs for the rules"}
 
 
 def _class_versions() -> list[str]:
@@ -344,9 +366,10 @@ def ui_classes(query: str = "", category: str = "", attr: str = "", limit: int =
                 continue
         k = r.get("corpus") or {}
         rows.append({"class": name, "category": r.get("category"), "base": (r.get("ancestors") or [None])[0],
-                     "uses": k.get("uses", 0), "files": k.get("files", 0), "props": len(r["props"]),
+                     "uses": k.get("uses", 0), "files": k.get("files", 0), "properties": len(r["props"]), "events": len(r["events"]),
                      **({"crashes": True} if r.get("crashes") else {}),
                      **({"tested": len((r["tested"].get("images") or [])) or True} if r.get("tested") else {}),
+                     **({"recipes": [x["id"] for x in r["recipes"]]} if r.get("recipes") else {}),
                      **({"live": False} if not r["props"] else {})})
     rows.sort(key=lambda x: -x["uses"])
     cats: dict[str, int] = {}
@@ -354,9 +377,10 @@ def ui_classes(query: str = "", category: str = "", attr: str = "", limit: int =
         cats[r.get("category", "other")] = cats.get(r.get("category", "other"), 0) + 1
     return {"version": ver, "total": len(rows), "classes": rows[:limit],
             **({"categories": cats} if not (query or category or attr) else {}),
-            "note": "uses/files = how often MA3's own .uixml uses the tag; props = live property count (0 = not read "
-                    "live yet); tested = hand-tested notes exist (a number = that many probe images).",
-            "next": "ui_class(name) for its properties, events, nesting and examples"}
+            "note": "uses/files = how often MA3's own .uixml uses the tag; properties/events = read live (0 = not read "
+                    "live yet); tested = hand-tested notes exist (a number = that many probe images); recipes = "
+                    "ready-made plugin patterns use it.",
+            "next": "building a plugin window? start with ui_recipes; ui_class(name) for a class's properties, events, nesting and examples"}
 
 
 def ui_class(name: str, prop: str = "", show: str = "", image: str = "", version: str = "") -> tuple[dict, bytes | None]:
@@ -411,7 +435,8 @@ def _ui_class(ver: str, r: dict, C: dict, prop: str, show: str, version: str) ->
         "version": ver, "class": r["class"], "category": r.get("category"),
         "inherits": " > ".join([r["class"]] + r.get("ancestors", [])),
         **({"subclasses": r["subclasses"][:30]} if r.get("subclasses") else {}),
-        "live": r.get("live"),
+        "live": {"source": (r.get("live") or {}).get("source"), "properties": len(r["props"]), "events": len(r["events"])},
+        **({"recipes": [f"ui_recipes({x['id']!r})  -- {x['title']}" for x in r["recipes"]]} if r.get("recipes") else {}),
         **({"WARNING": r["crashes"]} if r.get("crashes") else {}),
         "used_in_ma3": {"uses": k.get("uses", 0), "files": k.get("files", 0),
                         "parents": dict(list((k.get("parents") or {}).items())[:8]),

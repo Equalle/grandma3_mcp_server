@@ -45,11 +45,14 @@ version) -> `verified`. apply_doc_update applies only verified, non-stale propos
 another open one and add no lint errors (unclosed fence, broken link; `lint` on propose shows them).
 Readers see open proposals (pending_proposals) as unverified hints: confirm one you
 verified live, dispute_proposal one that is wrong. Never attach evidence you did not observe.
-Building a UI: ui_classes lists the UIXML widget classes, ui_class gives one class's settable properties (types,
-allowed values, defaults, what MA3 itself sets), events, nesting and examples. ui_examples shows how MA3 combines
-them in its own dialogs (screenshot <-> .uixml); ui_view shows one with each widget's .uixml file:line; ui_find goes
-from something seen on screen to its source, ui_xml from a source line to where it is seen; search_uixml /
-resolve_color / resolve_icon cover the UI source, theme colours and icons."""
+Building a plugin UI: START with ui_recipes -- ready-made patterns proven in working plugins and live probes (dialog
+shell: open/run/close; title bar; OK/Cancel footer; toggle; tabs; text input; picker; radio; lists; dynamic rows;
+faders; confirm; handlers; cleanup), each with XML + Lua, what is native vs needs Lua, and pitfalls -- and the docs
+ui-plugin-overlay-root, ui-modal-shade, ui-plugin-layout-traps. Then ui_class for one class's full property list
+(types, allowed values, defaults, what MA3 itself sets), events, nesting, tested notes and probe images; ui_classes
+lists all classes. ui_examples / ui_view show how MA3's own dialogs look and which .uixml builds them (a model for
+the look, not for plugin plumbing); ui_find / ui_xml / search_uixml / resolve_color / resolve_icon cover the UI
+source, theme colours and icons."""
 
 mcp = FastMCP("grandMA3 MCP Server", instructions=INSTRUCTIONS, host="0.0.0.0", port=8000, stateless_http=True)
 
@@ -185,8 +188,14 @@ def _ui_img(fn, *args) -> list:
 
 @mcp.tool()
 def ui_classes(query: str = "", category: str = "", attr: str = "", limit: int = 60, version: str = "") -> dict:
-    """START HERE to build a UI: the UIXML widget classes (Button, SwipeButton, UILayoutGrid, LineEdit, UiFader, BaseInput, ...), most-used first, with base class, how often MA3's own .uixml uses each and how many properties were read live. query = part of a class name; category = layout|frame|window|button|property-control|text|fader|scroll|grid|placeholder|object|other; attr = only classes that accept this attribute/property (e.g. "Icon", "Property", "Clicked")."""
+    """All UIXML widget classes (Button, SwipeButton, UILayoutGrid, LineEdit, UiFader, BaseInput, ...), most-used first, with base class, how often MA3's own .uixml uses each and how many properties were read live. query = part of a class name; category = layout|frame|window|button|property-control|text|fader|scroll|grid|placeholder|object|other; attr = only classes that accept this attribute/property (e.g. "Icon", "Property", "Clicked")."""
     return _ui(ui.ui_classes, query, category, attr, limit, version)
+
+
+@mcp.tool()
+def ui_recipes(recipe: str = "", version: str = "") -> dict:
+    """START HERE to build a plugin UI: ready-made patterns proven in working plugins and live probes on the target MA3 version. Without recipe: the list (id, title, when to use, what is native vs needs Lua). recipe = an id (dialog-shell, button-row-footer, toggle, tabs, text-input, picker, radio-selector, simple-list, dynamic-rows, fader-bound, fader-unbound, confirm, handlers, lifetime) or a word from a title: the XML + Lua, the proof, the pitfalls, the classes (-> ui_class) and docs topics to read. dialog-shell is the window every other recipe goes into."""
+    return _ui(ui.ui_recipes, recipe, version)
 
 
 @mcp.tool(structured_output=False)
