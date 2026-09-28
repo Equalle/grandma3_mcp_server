@@ -270,6 +270,169 @@ def ui_xml(file: str, line: int = 0, context: int = 10, show: bool = False,
     return info, data
 
 
+# ---------------------------------------------------------------- widget classes (building a UI)
+# <ver>/classes.json -- MA3-Terminal tools/ui-classes.mjs --build: per UIXML class its base classes, live property
+# list (type, enum values, default, own vs inherited), events, how MA3's own .uixml uses it, tested notes.
+@lru_cache(maxsize=4)
+def _classes(ver: str) -> dict:
+    f = UI_ROOT / ver / "classes.json"
+    if not f.is_file():
+        raise FileNotFoundError(f"no classes.json for {ver} under {UI_ROOT}")
+    return json.loads(f.read_text(encoding="utf-8"))["classes"]
+
+
+def _class_versions() -> list[str]:
+    if not UI_ROOT.is_dir():
+        return []
+    return sorted((d.name for d in UI_ROOT.iterdir() if (d / "classes.json").is_file()),
+                  key=lambda v: [int(x) if x.isdigit() else x for x in re.split(r"[.]", v)])
+
+
+def _cver(version: str) -> str:
+    vs = _class_versions()
+    if not vs:
+        raise FileNotFoundError(f"no classes.json under {UI_ROOT}")
+    hits = [v for v in vs if not version or v == version or v.startswith(version)]
+    if not hits:
+        raise FileNotFoundError(f"no class data for version {version!r}; have {', '.join(vs)}")
+    return hits[-1]
+
+
+def _vals(p: dict, n: int = 12) -> str:
+    if p.get("enum") == "YesNo":
+        return "Yes/No"
+    v = p.get("values") or []
+    names = [x.split("=")[0] for x in v if x.split("=")[0].isprintable()]
+    return ", ".join(names[:n]) + (f", … ({len(names)})" if len(names) > n else "")
+
+
+def _confirmed(p: dict) -> bool:
+    return bool(p.get("tested")) and (p["tested"].get("effect") or "unconfirmed") != "unconfirmed"
+
+
+def _prop_line(p: dict) -> str:
+    s = f"{p.get('attr') or p['name']}  {p['type']}{' ro' if p.get('readonly') else ''}"
+    if p.get("values"):
+        s += f"  [{_vals(p)}]"
+    if p.get("default") not in (None, "") and p["name"] != "NAME":
+        s += f"  default={p['default']}"
+    c = p.get("corpus")
+    if c:
+        s += f"  | MA3 uses it {c['n']}x: " + ", ".join(f"{v!r}" for v, _ in c["top"][:4])
+    if _confirmed(p):
+        s += f"  | tested: {p['tested'].get('effect')}"
+    return s
+
+
+def ui_classes(query: str = "", category: str = "", attr: str = "", limit: int = 60, version: str = "") -> dict:
+    ver = _cver(version)
+    C = _classes(ver)
+    rows = []
+    for name, r in C.items():
+        if query and query.lower() not in name.lower():
+            continue
+        if category and r.get("category") != category:
+            continue
+        if attr:
+            a = attr.upper()
+            if not any(p["name"] == a for p in r["props"]) and not any(e["name"] == a for e in r["events"]) \
+                    and not any(x["attr"].upper() == a for x in r.get("import_only_attrs", [])):
+                continue
+        k = r.get("corpus") or {}
+        rows.append({"class": name, "category": r.get("category"), "base": (r.get("ancestors") or [None])[0],
+                     "uses": k.get("uses", 0), "files": k.get("files", 0), "props": len(r["props"]),
+                     **({"crashes": True} if r.get("crashes") else {}),
+                     **({"tested": True} if r.get("tested_notes") else {}),
+                     **({"live": False} if not r["props"] else {})})
+    rows.sort(key=lambda x: -x["uses"])
+    cats: dict[str, int] = {}
+    for r in C.values():
+        cats[r.get("category", "other")] = cats.get(r.get("category", "other"), 0) + 1
+    return {"version": ver, "total": len(rows), "classes": rows[:limit],
+            **({"categories": cats} if not (query or category or attr) else {}),
+            "note": "uses/files = how often MA3's own .uixml uses the tag; props = live property count (0 = not read "
+                    "live yet); tested = confirmed visual notes exist.",
+            "next": "ui_class(name) for its properties, events, nesting and examples"}
+
+
+def ui_class(name: str, prop: str = "", show: str = "", version: str = "") -> dict:
+    ver = _cver(version)
+    C = _classes(ver)
+    r = C.get(name) or next((v for k, v in C.items() if k.lower() == name.lower()), None)
+    if not r:
+        close = [k for k in C if name.lower() in k.lower()][:15]
+        return {"error": f"no UI class {name!r}", "did_you_mean": close}
+    k = r.get("corpus") or {}
+    if prop:
+        pu = prop.upper()
+        p = next((x for x in r["props"] if x["name"] == pu or (x.get("attr") or "").upper() == pu), None)
+        e = next((x for x in r["events"] if x["name"] == pu), None)
+        if not p and not e:
+            return {"error": f"{r['class']} has no property {prop!r}",
+                    "did_you_mean": [x.get("attr") or x["name"] for x in r["props"] if pu in x["name"]][:15]}
+        out = dict(p or e)
+        if out.get("enum") == "YesNo":
+            out["values"] = ["Yes", "No"]
+        elif out.get("values"):
+            out["values"] = [v for v in out["values"] if v.split("=")[0].isprintable()]
+        if out.get("tested") and not _confirmed(out):
+            out.pop("tested")
+        out["class"] = r["class"]
+        out["accepted_by"] = sorted(c for c, v in C.items() if any(x["name"] == (p or e)["name"] for x in v["props"] + v["events"]))[:60]
+        return out
+    own = [p for p in r["props"] if p.get("own")]
+    used = [p for p in r["props"] if not p.get("own") and (p.get("corpus") or _confirmed(p))]
+    rest = [p for p in r["props"] if p not in own and p not in used]
+    info = {
+        "version": ver, "class": r["class"], "category": r.get("category"),
+        "inherits": " > ".join([r["class"]] + r.get("ancestors", [])),
+        **({"subclasses": r["subclasses"][:30]} if r.get("subclasses") else {}),
+        "live": r.get("live"),
+        **({"WARNING": r["crashes"]} if r.get("crashes") else {}),
+        "used_in_ma3": {"uses": k.get("uses", 0), "files": k.get("files", 0),
+                        "parents": dict(list((k.get("parents") or {}).items())[:8]),
+                        "children": dict(list((k.get("children") or {}).items())[:12])} if k else None,
+        "properties_own": [_prop_line(p) for p in own],
+        "properties_used_by_ma3": [_prop_line(p) for p in sorted(used, key=lambda p: -(p.get("corpus") or {}).get("n", 0))],
+        "events": [f"{e['attr']}" + (f"  | MA3 uses it {e['corpus']['n']}x: {e['corpus']['top'][0][0]!r}" if e.get("corpus") else "")
+                   for e in r["events"]],
+        **({"attrs_not_live_properties": [f"{a['attr']} ({a['n']}x: {', '.join(repr(v) for v, _ in a['top'][:3])})"
+                                          for a in r["import_only_attrs"]]} if r.get("import_only_attrs") else {}),
+        **({"attributes_ma3_sets (not read live: no types/defaults)": [
+            f"{a['attr']} ({a['n']}x: {', '.join(repr(v) for v, _ in a['top'][:4])})" for a in r["corpus_attrs"]]}
+           if r.get("corpus_attrs") else {}),
+        "examples": [f"{e['file']}:{e['line']}  {e['text']}" for e in (k.get("examples") or [])[:4]],
+    }
+    if show == "all":
+        info["properties_inherited"] = [_prop_line(p) for p in rest]
+    else:
+        info["properties_inherited"] = f"{len(rest)} more inherited, not used by MA3 on this class -- show='all' lists them"
+    if r.get("tested_notes"):
+        info["tested_notes"] = r["tested_notes"][:3000]
+    # what it looks like: instances on the reference screenshots
+    try:
+        cat = _catalog(_ver(version))
+        seen = []
+        for mname, si, w in cat["widgets"]:
+            if w["class"] == r["class"] and not w.get("hidden") and w["rect"][2] > 8 and w["rect"][3] > 8:
+                seen.append((0 if (w.get("text") or "").strip() else 1, mname, si, w))
+        seen.sort(key=lambda x: x[0])
+        looks, used_menus = [], set()
+        for _, mname, si, w in seen:
+            if mname in used_menus:
+                continue
+            used_menus.add(mname)
+            st = cat["menus"][mname]["states"][si]["state"]
+            looks.append(f"ui_view(menu={mname!r}, state={st!r}, widget={w['id']})  -- {w.get('text') or w.get('name')!r}")
+            if len(looks) >= 4:
+                break
+        info["looks_like"] = looks or "no instance on the reference screenshots"
+    except FileNotFoundError:
+        pass
+    info["next"] = "ui_class(name, prop=<attr>) for one property in full (all values, every class that accepts it)"
+    return info
+
+
 # ---------------------------------------------------------------- lib_menus corpus
 @lru_cache(maxsize=4)
 def _corpus(ver: str) -> list[tuple[str, list[str]]]:

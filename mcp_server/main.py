@@ -45,10 +45,11 @@ version) -> `verified`. apply_doc_update applies only verified, non-stale propos
 another open one and add no lint errors (unclosed fence, broken link; `lint` on propose shows them).
 Readers see open proposals (pending_proposals) as unverified hints: confirm one you
 verified live, dispute_proposal one that is wrong. Never attach evidence you did not observe.
-UI look: ui_examples lists MA3's own dialogs worth copying (screenshot <-> .uixml, by pattern); ui_view shows
-one with each widget's .uixml file:line; ui_find goes from something seen on screen to its source, ui_xml
-from a source line to where it is seen; search_uixml / resolve_color / resolve_icon cover the UI source,
-theme colours and icons."""
+Building a UI: ui_classes lists the UIXML widget classes, ui_class gives one class's settable properties (types,
+allowed values, defaults, what MA3 itself sets), events, nesting and examples. ui_examples shows how MA3 combines
+them in its own dialogs (screenshot <-> .uixml); ui_view shows one with each widget's .uixml file:line; ui_find goes
+from something seen on screen to its source, ui_xml from a source line to where it is seen; search_uixml /
+resolve_color / resolve_icon cover the UI source, theme colours and icons."""
 
 mcp = FastMCP("grandMA3 MCP Server", instructions=INSTRUCTIONS, host="0.0.0.0", port=8000, stateless_http=True)
 
@@ -183,8 +184,20 @@ def _ui_img(fn, *args) -> list:
 
 
 @mcp.tool()
+def ui_classes(query: str = "", category: str = "", attr: str = "", limit: int = 60, version: str = "") -> dict:
+    """START HERE to build a UI: the UIXML widget classes (Button, SwipeButton, UILayoutGrid, LineEdit, UiFader, BaseInput, ...), most-used first, with base class, how often MA3's own .uixml uses each and how many properties were read live. query = part of a class name; category = layout|frame|window|button|property-control|text|fader|scroll|grid|placeholder|object|other; attr = only classes that accept this attribute/property (e.g. "Icon", "Property", "Clicked")."""
+    return _ui(ui.ui_classes, query, category, attr, limit, version)
+
+
+@mcp.tool()
+def ui_class(name: str, prop: str = "", show: str = "", version: str = "") -> dict:
+    """Everything needed to use one UIXML class: inheritance chain, the properties it adds itself and the ones MA3's .uixml sets on it (UIXML attribute spelling, type, allowed values, default, real values MA3 uses, confirmed visual effect where tested), events (Clicked, OnLoad, ...), attributes MA3 writes that are not live properties, typical parents/children, example elements (file:line) and ui_view calls that show real instances. prop = one property in full (all values + every class that accepts it); show="all" also lists the inherited properties MA3 never sets on it."""
+    return _ui(ui.ui_class, name, prop, show, version)
+
+
+@mcp.tool()
 def ui_examples(pattern: str = "", version: str = "") -> dict:
-    """START HERE for building a plugin UI that looks native: the reviewed set of MA3's own menus/dialogs whose look the .uixml explains (one per layout), each with what it shows, its UI patterns and its .uixml file. pattern filters (tabs, property-form, toggles, swipe-buttons, buttons, text-input, radio, faders, colour-appearance, grid-table, scroll-list, auto-layout, main-dialog, resize-split, pool-tiles). version = MA3 version prefix (default: newest)."""
+    """How MA3 combines the classes into real dialogs: a reviewed set of its own menus/dialogs whose look the .uixml explains (one per layout), with what each shows, its UI patterns and its .uixml file. pattern filters (tabs, property-form, toggles, swipe-buttons, buttons, text-input, radio, faders, colour-appearance, grid-table, scroll-list, auto-layout, main-dialog, resize-split, pool-tiles). version = MA3 version prefix (default: newest)."""
     return _ui(ui.ui_examples, pattern, version)
 
 
