@@ -189,10 +189,10 @@ def ui_classes(query: str = "", category: str = "", attr: str = "", limit: int =
     return _ui(ui.ui_classes, query, category, attr, limit, version)
 
 
-@mcp.tool()
-def ui_class(name: str, prop: str = "", show: str = "", version: str = "") -> dict:
-    """Everything needed to use one UIXML class: inheritance chain, the properties it adds itself and the ones MA3's .uixml sets on it (UIXML attribute spelling, type, allowed values, default, real values MA3 uses, confirmed visual effect where tested), events (Clicked, OnLoad, ...), attributes MA3 writes that are not live properties, typical parents/children, example elements (file:line) and ui_view calls that show real instances. prop = one property in full (all values + every class that accepts it); show="all" also lists the inherited properties MA3 never sets on it."""
-    return _ui(ui.ui_class, name, prop, show, version)
+@mcp.tool(structured_output=False)
+def ui_class(name: str, prop: str = "", show: str = "", image: str = "", version: str = "") -> list:
+    """Everything needed to use one UIXML class: inheritance chain, the properties it adds itself and the ones MA3's .uixml sets on it (UIXML attribute spelling, type, allowed values, default, real values MA3 uses, confirmed visual effect where tested), events (Clicked, OnLoad, ...), attributes MA3 writes that are not live properties, typical parents/children, example elements (file:line), ui_view calls that show real instances, nesting rules (what may go inside it) and hand-tested notes + probe images where the class was tested. prop = one property in full (all values + every class that accepts it); show="all" also lists the inherited properties MA3 never sets on it. image = one of the probe images listed under tested.images (a grid of the widget with one attribute varied per cell; the caption maps cells to attributes)."""
+    return _ui_img(ui.ui_class, name, prop, show, image, version)
 
 
 @mcp.tool()

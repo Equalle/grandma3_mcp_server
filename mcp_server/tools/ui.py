@@ -272,7 +272,9 @@ def ui_xml(file: str, line: int = 0, context: int = 10, show: bool = False,
 
 # ---------------------------------------------------------------- widget classes (building a UI)
 # <ver>/classes.json -- MA3-Terminal tools/ui-classes.mjs --build: per UIXML class its base classes, live property
-# list (type, enum values, default, own vs inherited), events, how MA3's own .uixml uses it, tested notes.
+# list (type, enum values, default, own vs inherited), events, how MA3's own .uixml uses it, nesting rules and the
+# hand-tested facts (MA3-Terminal tools/ui-tested.json: per-property effect/notes, per-class notes + probe images under
+# <ver>/images/<Class>/).
 @lru_cache(maxsize=4)
 def _classes(ver: str) -> dict:
     f = UI_ROOT / ver / "classes.json"
@@ -307,7 +309,7 @@ def _vals(p: dict, n: int = 12) -> str:
 
 
 def _confirmed(p: dict) -> bool:
-    return bool(p.get("tested")) and (p["tested"].get("effect") or "unconfirmed") != "unconfirmed"
+    return bool(p.get("tested"))
 
 
 def _prop_line(p: dict) -> str:
@@ -320,7 +322,9 @@ def _prop_line(p: dict) -> str:
     if c:
         s += f"  | MA3 uses it {c['n']}x: " + ", ".join(f"{v!r}" for v, _ in c["top"][:4])
     if _confirmed(p):
-        s += f"  | tested: {p['tested'].get('effect')}"
+        t = p["tested"]
+        e = t.get("effect")
+        s += "  | tested: no visible effect" if e == "none" else f"  | tested: {e}" if e else "  | tested notes"
     return s
 
 
@@ -342,7 +346,7 @@ def ui_classes(query: str = "", category: str = "", attr: str = "", limit: int =
         rows.append({"class": name, "category": r.get("category"), "base": (r.get("ancestors") or [None])[0],
                      "uses": k.get("uses", 0), "files": k.get("files", 0), "props": len(r["props"]),
                      **({"crashes": True} if r.get("crashes") else {}),
-                     **({"tested": True} if r.get("tested_notes") else {}),
+                     **({"tested": len((r["tested"].get("images") or [])) or True} if r.get("tested") else {}),
                      **({"live": False} if not r["props"] else {})})
     rows.sort(key=lambda x: -x["uses"])
     cats: dict[str, int] = {}
@@ -351,17 +355,37 @@ def ui_classes(query: str = "", category: str = "", attr: str = "", limit: int =
     return {"version": ver, "total": len(rows), "classes": rows[:limit],
             **({"categories": cats} if not (query or category or attr) else {}),
             "note": "uses/files = how often MA3's own .uixml uses the tag; props = live property count (0 = not read "
-                    "live yet); tested = confirmed visual notes exist.",
+                    "live yet); tested = hand-tested notes exist (a number = that many probe images).",
             "next": "ui_class(name) for its properties, events, nesting and examples"}
 
 
-def ui_class(name: str, prop: str = "", show: str = "", version: str = "") -> dict:
+def ui_class(name: str, prop: str = "", show: str = "", image: str = "", version: str = "") -> tuple[dict, bytes | None]:
     ver = _cver(version)
     C = _classes(ver)
     r = C.get(name) or next((v for k, v in C.items() if k.lower() == name.lower()), None)
     if not r:
         close = [k for k in C if name.lower() in k.lower()][:15]
-        return {"error": f"no UI class {name!r}", "did_you_mean": close}
+        return {"error": f"no UI class {name!r}", "did_you_mean": close}, None
+    if image:
+        return _class_image(ver, r, image)
+    return _ui_class(ver, r, C, prop, show, version), None
+
+
+def _class_image(ver: str, r: dict, image: str) -> tuple[dict, bytes | None]:
+    imgs = (r.get("tested") or {}).get("images") or []
+    i = next((x for x in imgs if x["file"] == image or x["file"].rsplit(".", 1)[0] == image), None)         or next((x for x in imgs if image.lower() in x["file"].lower()), None)
+    if not i:
+        return {"error": f"{r['class']} has no probe image {image!r}", "images": [x["file"] for x in imgs]}, None
+    p = UI_ROOT / ver / "images" / r["class"] / i["file"]
+    if not p.is_file():
+        return {"error": f"image file missing on the server: {p}"}, None
+    img = _load_png(p)
+    info = {"class": r["class"], "image": i["file"], "caption": i["caption"], "source": i.get("source"),
+            "probed_on": i.get("ma3"), "size": f"{img.width}x{img.height}"}
+    return info, _png_bytes(img, 0.0)
+
+
+def _ui_class(ver: str, r: dict, C: dict, prop: str, show: str, version: str) -> dict:
     k = r.get("corpus") or {}
     if prop:
         pu = prop.upper()
@@ -407,8 +431,17 @@ def ui_class(name: str, prop: str = "", show: str = "", version: str = "") -> di
         info["properties_inherited"] = [_prop_line(p) for p in rest]
     else:
         info["properties_inherited"] = f"{len(rest)} more inherited, not used by MA3 on this class -- show='all' lists them"
-    if r.get("tested_notes"):
-        info["tested_notes"] = r["tested_notes"][:3000]
+    if r.get("nesting"):
+        info["nesting"] = r["nesting"]
+    t = r.get("tested")
+    if t:
+        info["tested"] = {
+            **({"primitive": t["primitive"]} if t.get("primitive") else {}),
+            **({"notes": t["notes"][:3000]} if t.get("notes") else {}),
+            **({"images": [f"ui_class({r['class']!r}, image={x['file']!r})  -- {x['caption'][:160]}"
+                           for x in t.get("images") or []]} if t.get("images") else {}),
+            "probed_on": "grandMA3 onPC 2.4.2",
+        }
     # what it looks like: instances on the reference screenshots
     try:
         cat = _catalog(_ver(version))
