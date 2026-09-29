@@ -52,7 +52,15 @@ ui-plugin-overlay-root, ui-modal-shade, ui-plugin-layout-traps. Then ui_class fo
 (types, allowed values, defaults, what MA3 itself sets), events, nesting, tested notes and probe images; ui_classes
 lists all classes. ui_examples / ui_view show how MA3's own dialogs look and which .uixml builds them (a model for
 the look, not for plugin plumbing); ui_find / ui_xml / search_uixml / resolve_color / resolve_icon cover the UI
-source, theme colours and icons."""
+source, theme colours and icons.
+
+After a task that used live MA3 or these docs, write back what was unclear, cost
+extra calls, or was corrected by the user: search first, then propose_section_update
+with live evidence (what ran, what came back) and apply_doc_update once verified.
+Draft the text from the evidence list; every sentence must trace to it. Mark untested
+points as open instead of stating them, and check the diff before applying: a section
+replace must not alter or drop existing text. A user correction about how to work is a
+rule: record it in the doc it concerns."""
 
 mcp = FastMCP("grandMA3 MCP Server", instructions=INSTRUCTIONS, host="0.0.0.0", port=8000, stateless_http=True)
 
